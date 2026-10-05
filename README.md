@@ -4,7 +4,7 @@ Projekt inżynierski stanowiący hybrydowy system decyzyjny służący do rekome
 
 ## Wersja live (Demo)
 
-🌍 Aplikacja jest dostępna online: [Uruchom AutoExpert](autoexpert-systemekspercki.netlify.app)
+🌍 Aplikacja jest dostępna online: [Uruchom AutoExpert](https://autoexpert-systemekspercki.netlify.app)
 
 ## Architektura i technologie
 
