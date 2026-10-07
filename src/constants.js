@@ -7,7 +7,7 @@ export const CONDITIONS = ['Nowy', 'Używany']
 export const CRITERIA = [
 	{ key: 'trunkSize', weight: 'trunk', benefit: true, label: 'Wielkość bagażnika' },
 	{ key: 'consumption', weight: 'consumption', benefit: false, label: 'Spalanie paliwa' },
-	{ key: 'maintenanceCost', weight: 'maintenance', benefit: false, label: 'Koszty napraw' },
+	{ key: 'maintenanceCost', weight: 'maintenance', benefit: false, label: 'Niskie koszty napraw' },
 	{ key: 'comfort', weight: 'comfort', benefit: true, label: 'Komfort' },
 	{ key: 'price', weight: 'price', benefit: false, label: 'Niska cena' },
 	{ key: 'safety', weight: 'safety', benefit: true, label: 'Bezpieczeństwo' },

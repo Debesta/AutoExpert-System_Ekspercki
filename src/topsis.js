@@ -2,7 +2,7 @@ import { CRITERIA } from './constants'
 
 export function calculateTopsis(cars, weights, limit = 5) {
 	if (cars.length === 0) return []
-	if (cars.length === 1) return [{ ...cars[0], topsisScore: 1 }] // Poprawka: gdy jest 1 auto
+	if (cars.length === 1) return [{ ...cars[0], topsisScore: 1 }]
 
 	const totalWeight = CRITERIA.reduce((s, c) => s + weights[c.weight], 0) || 1
 
