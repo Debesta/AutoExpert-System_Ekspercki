@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { calculateTopsis } from './topsis'
 
+// Zmockowana baza aut do weryfikacji logiki obliczeniowej
 const mockCars = [
 	{
 		id: 1,
@@ -40,6 +41,7 @@ const mockCars = [
 	},
 ]
 
+// Przykładowe (nieznormalizowane) wagi
 const weights = {
 	price: 3,
 	consumption: 3,
@@ -57,18 +59,22 @@ describe('Algorytm TOPSIS', () => {
 		expect(result[0].topsisScore).toBe(1)
 	})
 
+	// Kluczowy test: Weryfikacja, czy algorytm jest niewrażliwy na proporcjonalne skalowanie wag
 	it('wynik jest niezmienniczy względem skali wag (x2)', () => {
 		const w1 = { ...weights }
+		// Mnożymy wszystkie wagi razy 2
 		const w2 = Object.fromEntries(Object.entries(weights).map(([k, v]) => [k, v * 2]))
 
+		// Ranking powinien pozostać identyczny
 		const res1 = calculateTopsis(mockCars, w1)
 		const res2 = calculateTopsis(mockCars, w2)
 		expect(res1[0].id).toBe(res2[0].id)
 	})
 
 	it('zwraca maksymalnie limit elementów (domyślnie 5)', () => {
+		// Generowanie tablicy 10 takich samych aut
 		const manyCars = Array.from({ length: 10 }, (_, i) => ({ ...mockCars[0], id: i }))
 		const result = calculateTopsis(manyCars, weights)
-		expect(result.length).toBe(5)
+		expect(result.length).toBe(5) // Sprawdzenie, czy algorytm ucina wyniki zgodnie z argumentem limit
 	})
 })

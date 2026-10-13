@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { carsDatabase as initialCars } from './data'
+import { getAllCars, addCarToDB, updateCarInDB, deleteCarFromDB } from './db'
 import { calculateTopsis } from './topsis'
 import { filterCars } from './utils/filterCars'
 import { BODY_TYPES, FUELS, TRANSMISSIONS, DRIVES, CONDITIONS, CRITERIA } from './constants'
@@ -13,8 +13,19 @@ import {
 	Tooltip as RechartsTooltip,
 } from 'recharts'
 
+// --- FUNKCJE POMOCNICZE (Wagi 1-10) ---
+// Zwraca obiekt z tekstem i klasami kolorystycznymi dla etykiet suwaków TOPSIS
+const getWeightConfig = value => {
+	if (value <= 2) return { text: 'Znikome znaczenie', color: 'bg-gray-100 text-gray-600' }
+	if (value <= 4) return { text: 'Mało ważne', color: 'bg-blue-100 text-blue-700' }
+	if (value <= 6) return { text: 'Średnio ważne', color: 'bg-yellow-100 text-yellow-700' }
+	if (value <= 8) return { text: 'Ważne', color: 'bg-orange-100 text-orange-700' }
+	return { text: 'Priorytet', color: 'bg-red-100 text-red-700' }
+}
+
 // --- KOMPONENTY WIDOKU ---
 
+// Komponent reużywalny: Standardowe pole tekstowe/liczbowe do formularzy z etykietą
 const FormInput = ({ label, ...props }) => (
 	<div>
 		<label className='block text-[10px] font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider'>{label}</label>
@@ -25,6 +36,7 @@ const FormInput = ({ label, ...props }) => (
 	</div>
 )
 
+// Komponent reużywalny: Rozwijana lista (select) generowana na podstawie przekazanej tablicy opcji
 const FormSelect = ({ label, options, placeholder, ...props }) => (
 	<div>
 		<label className='block text-[10px] font-bold text-slate-500 mb-1 ml-1 uppercase tracking-wider'>{label}</label>
@@ -41,40 +53,53 @@ const FormSelect = ({ label, options, placeholder, ...props }) => (
 	</div>
 )
 
-const PreferenceSlider = ({ label, name, value, onChange, leftText, rightText }) => (
-	<div className='bg-slate-50 p-4 rounded-xl border border-slate-100 transition-colors hover:bg-slate-100'>
-		<div className='flex justify-between items-end mb-3'>
-			<label htmlFor={name} className='font-semibold text-slate-700 text-sm'>
-				{label}
-			</label>
-			<span className='text-xs font-bold text-blue-600 bg-blue-100 px-3 py-1 rounded-full shadow-sm'>{value}/5</span>
-		</div>
-		<input
-			id={name}
-			name={name}
-			type='range'
-			min='1'
-			max='5'
-			value={value}
-			onChange={onChange}
-			className='w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600'
-		/>
-		<div className='flex justify-between text-[10px] text-slate-400 mt-2 font-bold uppercase tracking-wider'>
-			<span>{leftText}</span>
-			<span>{rightText}</span>
-		</div>
-	</div>
-)
+// Komponent reużywalny: Suwak wag (skala 1-10) ze zintegrowanymi etykietami dynamicznymi
+const PreferenceSlider = ({ label, name, value, onChange }) => {
+	const config = getWeightConfig(value)
 
+	return (
+		<div className='bg-slate-50 p-3 rounded-xl border border-slate-100 transition-colors hover:bg-slate-100'>
+			<div className='flex justify-between items-end mb-2'>
+				<label htmlFor={name} className='font-semibold text-slate-700 text-sm'>
+					{label}
+				</label>
+				<div className='flex items-center gap-2'>
+					<span className={`text-[9px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${config.color}`}>
+						{config.text}
+					</span>
+					<span className='text-[11px] font-black text-slate-700 w-4 text-right'>{value}</span>
+				</div>
+			</div>
+			<input
+				id={name}
+				name={name}
+				type='range'
+				min='1'
+				max='10'
+				value={value}
+				onChange={onChange}
+				className='w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600'
+			/>
+			<div className='flex justify-between text-[9px] text-slate-400 mt-1.5 font-bold uppercase tracking-wider'>
+				<span>1 (Min)</span>
+				<span>10 (Max)</span>
+			</div>
+		</div>
+	)
+}
+
+// Funkcja wizualna: Zamienia surową ocenę kosztów napraw (1-10) na format przyjazny dla użytkownika
 const getMaintenanceText = score => {
 	if (score <= 4) return <span className='text-emerald-600 font-bold'>Niskie (Tanie części)</span>
 	if (score <= 7) return <span className='text-yellow-600 font-bold'>Umiarkowane</span>
 	return <span className='text-red-500 font-bold'>Wysokie (Premium)</span>
 }
 
+// Funkcja pomocnicza: Formatuje liczby na polską walutę (np. 50000 -> 50 000 zł)
 const formatPrice = price =>
 	new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN', maximumFractionDigits: 0 }).format(price)
 
+// Funkcja pomocnicza: Wyświetla zakres lat produkcji (obsługuje brak yearTo dla produkowanych wciąż aut)
 const renderYear = car => {
 	return car.yearTo ? `${car.yearFrom} - ${car.yearTo}` : `${car.yearFrom} - obecnie`
 }
@@ -84,6 +109,11 @@ const AdminPanel = ({ cars, setCars }) => {
 	const [uiMessage, setUiMessage] = useState('')
 	const [editingId, setEditingId] = useState(null)
 
+	// Stan paginacji tabeli aut
+	const ITEMS_PER_PAGE = 50
+	const [currentPage, setCurrentPage] = useState(1)
+
+	// Szablon pustego formularza używany przy resecie po dodaniu nowego auta
 	const initialNewCar = {
 		brand: '',
 		model: '',
@@ -110,8 +140,10 @@ const AdminPanel = ({ cars, setCars }) => {
 
 	const handleChange = e => setNewCar(prev => ({ ...prev, [e.target.name]: e.target.value }))
 
-	const handleSubmit = e => {
+	// Handler obsługujący operacje Create/Update w IndexedDB
+	const handleSubmit = async e => {
 		e.preventDefault()
+		// Rzutowanie wartości pobranych z formularza jako stringi na liczby, niezbędne do obliczeń
 		const carData = {
 			...newCar,
 			seats: Number(newCar.seats),
@@ -130,19 +162,24 @@ const AdminPanel = ({ cars, setCars }) => {
 		}
 
 		if (editingId) {
-			setCars(prev => prev.map(c => (c.id === editingId ? { ...carData, id: editingId } : c)))
+			const updatedCar = { ...carData, id: editingId }
+			await updateCarInDB(updatedCar)
+			setCars(prev => prev.map(c => (c.id === editingId ? updatedCar : c)))
 			setUiMessage(`Zaktualizowano pojazd: ${carData.brand} ${carData.model}`)
 		} else {
-			const newId = cars.length > 0 ? Math.max(...cars.map(c => c.id)) + 1 : 1
+			const newId = await addCarToDB(carData)
 			setCars(prev => [{ ...carData, id: newId }, ...prev])
 			setUiMessage(`Dodano pojazd: ${carData.brand} ${carData.model}`)
+			setCurrentPage(1) // Wymuszenie widoku pierwszej strony, by upewnić się, że widać nowo dodane auto
 		}
 
+		// Reset formularza
 		setNewCar(initialNewCar)
 		setEditingId(null)
 		setTimeout(() => setUiMessage(''), 3000)
 	}
 
+	// Przygotowanie formularza do edycji istniejącego auta
 	const handleEditClick = car => {
 		setNewCar({ ...car, yearTo: car.yearTo || '' })
 		setEditingId(car.id)
@@ -154,16 +191,42 @@ const AdminPanel = ({ cars, setCars }) => {
 		setEditingId(null)
 	}
 
-	const handleDelete = id => {
+	// Handler usuwający auto z bazy IndexedDB
+	const handleDelete = async id => {
 		if (window.confirm('Czy na pewno chcesz usunąć ten pojazd z bazy?')) {
-			setCars(prev => prev.filter(c => c.id !== id))
+			await deleteCarFromDB(id)
+			setCars(prev => {
+				const updatedList = prev.filter(c => c.id !== id)
+				// Zapobiega wyświetlaniu pustej strony, jeśli usunęliśmy ostatnie auto na obecnej podstronie paginacji
+				const newTotalPages = Math.ceil(updatedList.length / ITEMS_PER_PAGE) || 1
+				if (currentPage > newTotalPages) {
+					setCurrentPage(newTotalPages)
+				}
+				return updatedList
+			})
 			setUiMessage('Usunięto pojazd z bazy.')
 			setTimeout(() => setUiMessage(''), 3000)
 		}
 	}
 
+	// Logika paginacji (wycinanie aut dla bieżącej widocznej strony tabeli)
+	const totalPages = Math.ceil(cars.length / ITEMS_PER_PAGE) || 1
+	const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+	const currentCars = cars.slice(startIndex, startIndex + ITEMS_PER_PAGE)
+
+	const handleNextPage = () => {
+		if (currentPage < totalPages) setCurrentPage(prev => prev + 1)
+	}
+
+	const handlePrevPage = () => {
+		if (currentPage > 1) setCurrentPage(prev => prev - 1)
+	}
+
 	return (
 		<div className='space-y-6'>
+			{/* ... Struktura renderowania (bez zmian) ... */}
+			{/* W tym miejscu znajduje się JSX odpowiedzialny za wyświetlanie formularzy CRUD 
+                oraz tabeli w panelu administratora. */}
 			{uiMessage && (
 				<div className='bg-emerald-100 text-emerald-700 p-4 rounded-xl font-bold shadow-sm'>{uiMessage}</div>
 			)}
@@ -179,7 +242,7 @@ const AdminPanel = ({ cars, setCars }) => {
 						<FormInput required label='Model pojazdu' name='model' value={newCar.model} onChange={handleChange} />
 						<FormInput
 							required
-							label='Cena (PLN)'
+							label='Cena bazowa (PLN)'
 							type='number'
 							min='0'
 							name='price'
@@ -260,7 +323,7 @@ const AdminPanel = ({ cars, setCars }) => {
 					<div className='grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 bg-slate-50 p-5 rounded-2xl border border-slate-100'>
 						<FormInput
 							required
-							label='Przyspieszenie 0-100km/h(s)'
+							label='Przyspieszenie (s)'
 							type='number'
 							step='0.1'
 							min='0'
@@ -280,7 +343,7 @@ const AdminPanel = ({ cars, setCars }) => {
 						/>
 						<FormInput
 							required
-							label='Bagażnik (l)'
+							label='Bagażnik (L)'
 							type='number'
 							min='0'
 							name='trunkSize'
@@ -323,7 +386,7 @@ const AdminPanel = ({ cars, setCars }) => {
 						/>
 						<FormInput
 							required
-							label='Niskie koszty napraw (1-10)'
+							label='Koszty napraw (10=Najdroższe)'
 							type='number'
 							min='1'
 							max='10'
@@ -353,10 +416,10 @@ const AdminPanel = ({ cars, setCars }) => {
 
 			<div className='bg-white rounded-3xl shadow-sm border p-4'>
 				<h3 className='text-lg font-bold mb-4 px-2'>Baza wiedzy</h3>
-				<div className='overflow-x-auto'>
+				<div className='overflow-x-auto max-h-[600px] overflow-y-auto mb-4'>
 					<table className='w-full text-left text-sm whitespace-nowrap'>
-						<thead>
-							<tr className='border-b bg-slate-50 text-slate-500'>
+						<thead className='sticky top-0 bg-slate-100 z-10'>
+							<tr className='border-b text-slate-500'>
 								<th className='p-3 font-semibold rounded-tl-xl'>Auto</th>
 								<th className='p-3 font-semibold'>Cena rynkowa</th>
 								<th className='p-3 font-semibold'>Specyfikacja</th>
@@ -364,20 +427,22 @@ const AdminPanel = ({ cars, setCars }) => {
 							</tr>
 						</thead>
 						<tbody>
-							{cars.map(c => (
+							{currentCars.map(c => (
 								<tr key={c.id} className='border-b hover:bg-slate-50 transition-colors'>
 									<td className='p-3'>
 										<div className='font-bold text-slate-800'>
 											{c.brand} {c.model}
 										</div>
 										<div className='text-xs text-slate-500'>
-											{renderYear(c)} • {c.bodyType}
+											{renderYear(c)} • {c.bodyType} • {c.condition}
 										</div>
 									</td>
 									<td className='p-3 font-bold text-emerald-600'>{formatPrice(c.price)}</td>
 									<td className='p-3 text-xs text-slate-500'>
-										<div>Paliwo: {c.consumption} l/100km</div>
-										<div>Bagażnik: {c.trunkSize} l</div>
+										<div>
+											Paliwo: {c.fuel} ({c.consumption} L/100km)
+										</div>
+										<div>Bagażnik: {c.trunkSize} L</div>
 									</td>
 									<td className='p-3 text-right'>
 										<button
@@ -393,9 +458,47 @@ const AdminPanel = ({ cars, setCars }) => {
 									</td>
 								</tr>
 							))}
+							{currentCars.length === 0 && (
+								<tr>
+									<td colSpan='4' className='p-8 text-center text-slate-500'>
+										Brak pojazdów do wyświetlenia na tej stronie.
+									</td>
+								</tr>
+							)}
 						</tbody>
 					</table>
 				</div>
+
+				{totalPages > 1 && (
+					<div className='flex flex-col sm:flex-row justify-between items-center px-4 py-2 border-t border-slate-100 mt-2 gap-4'>
+						<span className='text-sm font-medium text-slate-500'>
+							Strona <span className='text-slate-800 font-bold'>{currentPage}</span> z{' '}
+							<span className='text-slate-800 font-bold'>{totalPages}</span>
+						</span>
+						<div className='flex gap-2'>
+							<button
+								onClick={handlePrevPage}
+								disabled={currentPage === 1}
+								className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+									currentPage === 1
+										? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+										: 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm'
+								}`}>
+								Poprzednia
+							</button>
+							<button
+								onClick={handleNextPage}
+								disabled={currentPage === totalPages}
+								className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+									currentPage === totalPages
+										? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+										: 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 hover:shadow-sm'
+								}`}>
+								Następna
+							</button>
+						</div>
+					</div>
+				)}
 			</div>
 		</div>
 	)
@@ -404,16 +507,25 @@ const AdminPanel = ({ cars, setCars }) => {
 // --- GŁÓWNA APLIKACJA ---
 export default function App() {
 	const [view, setView] = useState('user')
+	const [cars, setCars] = useState([])
+	const [isLoading, setIsLoading] = useState(true)
 
-	const [cars, setCars] = useState(() => {
-		const saved = localStorage.getItem('expertSystemCars')
-		return saved ? JSON.parse(saved) : initialCars
-	})
-
+	// Inicjalizacyjne pobieranie wszystkich pojazdów z IndexedDB po zamontowaniu komponentu
 	useEffect(() => {
-		localStorage.setItem('expertSystemCars', JSON.stringify(cars))
-	}, [cars])
+		async function loadData() {
+			try {
+				const dbCars = await getAllCars()
+				setCars(dbCars)
+			} catch (error) {
+				console.error('Błąd inicjalizacji IndexedDB:', error)
+			} finally {
+				setIsLoading(false)
+			}
+		}
+		loadData()
+	}, [])
 
+	// Stan przechowujący aktualne wartości surowych filtrów (tzw. hard filters)
 	const [hardFilters, setHardFilters] = useState({
 		condition: '',
 		bodyType: '',
@@ -428,15 +540,16 @@ export default function App() {
 		maxPower: '',
 	})
 
+	// Stan przechowujący wagę algorytmu (skala 1-10) przypisywaną każdemu z kryteriów TOPSIS
 	const [topsisPrefs, setTopsisPrefs] = useState({
-		price: 3,
-		consumption: 3,
-		safety: 3,
-		reliability: 3,
-		performance: 3,
-		trunk: 3,
-		maintenance: 3,
-		comfort: 3,
+		price: 5,
+		consumption: 5,
+		safety: 5,
+		reliability: 5,
+		performance: 5,
+		trunk: 5,
+		maintenance: 5,
+		comfort: 5,
 	})
 
 	const [results, setResults] = useState([])
@@ -445,19 +558,44 @@ export default function App() {
 	const handleHardFilterChange = e => setHardFilters(f => ({ ...f, [e.target.name]: e.target.value }))
 	const handleTopsisChange = e => setTopsisPrefs(p => ({ ...p, [e.target.name]: parseInt(e.target.value) }))
 
+	// Wyzwolenie obliczeń algorytmu TOPSIS
 	const handleSearch = e => {
 		e.preventDefault()
+
+		// --- Normalizacja wag przed przekazaniem do algorytmu ---
+		// TOPSIS wymaga wag ułamkowych, których suma to 1 (tzw. znormalizowany wektor wag).
+		const totalWeight = Object.values(topsisPrefs).reduce((sum, w) => sum + w, 0)
+
+		const normalizedPrefs = {}
+		if (totalWeight > 0) {
+			Object.keys(topsisPrefs).forEach(key => {
+				normalizedPrefs[key] = topsisPrefs[key] / totalWeight
+			})
+		} else {
+			// Fail-safe na wypadek, gdyby suma wag wynosiła 0 (dzielenie równe)
+			Object.keys(topsisPrefs).forEach(key => {
+				normalizedPrefs[key] = 1 / Object.keys(topsisPrefs).length
+			})
+		}
+
+		// Zastosowanie twardych filtrów (odsianie aut, które nie spełniają bazowych kryteriów)
 		const filtered = filterCars(cars, hardFilters)
-		const top = calculateTopsis(filtered, topsisPrefs, 5)
+
+		// Przekazanie wstępnie przefiltrowanej bazy i ZNORMALIZOWANYCH wag do mechanizmu TOPSIS.
+		// Trzeci argument to limit wyników zwracanych przez TOPSIS (zwraca top 5 aut).
+		const top = calculateTopsis(filtered, normalizedPrefs, 5)
 		setResults(top)
 		setHasSearched(true)
 		window.scrollTo({ top: 0, behavior: 'smooth' })
 	}
 
+	// Przygotowanie przetworzonych danych dla biblioteki Recharts generującej wykresy Radarowe.
+	// Hook useMemo gwarantuje, że wykresy przeliczą się tylko przy zmianie zawartości tablicy results.
 	const radarData = useMemo(() => {
 		if (results.length === 0) return []
 		const top3 = results.slice(0, 3)
 
+		// Granice wartości min-max potrzebne do poprawnego wyrenderowania wykresu na stałej osi (0-10)
 		const BOUNDS = {
 			trunkSize: { min: 150, max: 700 },
 			consumption: { min: 0, max: 12 },
@@ -469,10 +607,13 @@ export default function App() {
 			acceleration: { min: 2.5, max: 14 },
 		}
 
+		// Normalizacja dowolnej surowej wartości atrybutu pojazdu do zunifikowanej skali wykreślnej od 0 do 10
 		const normalize = (key, val, invert = false) => {
 			const b = BOUNDS[key] || { min: 0, max: Math.max(val, 1) }
 			let clampedVal = Math.max(b.min, Math.min(b.max, val))
 			let score = ((clampedVal - b.min) / (b.max - b.min)) * 10
+			// W przypadku kryteriów "złych" (jak cena czy spalanie - the less the better),
+			// odwracamy skale, tak by na wykresie wielokąt był najpełniejszy dla najlepszego wyboru.
 			return invert ? 10 - score : score
 		}
 
@@ -491,6 +632,18 @@ export default function App() {
 		})
 	}, [results])
 
+	// Ekran ładowania na czas nawiązania połączenia i ściągania całej bazy aut z IndexedDB
+	if (isLoading) {
+		return (
+			<div className='min-h-screen bg-slate-100 flex flex-col justify-center items-center'>
+				<div className='w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4'></div>
+				<p className='text-slate-600 font-bold'>
+					Ładowanie bazy {cars.length > 0 ? cars.length : '...'} pojazdów (IndexedDB)...
+				</p>
+			</div>
+		)
+	}
+
 	return (
 		<div className='min-h-screen bg-slate-100 font-sans text-slate-800'>
 			<nav className='bg-white border-b border-slate-200 p-4 flex justify-between items-center shadow-sm sticky top-0 z-50'>
@@ -505,12 +658,12 @@ export default function App() {
 					<button
 						onClick={() => setView('user')}
 						className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${view === 'user' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-						System ekspercki
+						Algorytm decyzyjny
 					</button>
 					<button
 						onClick={() => setView('admin')}
 						className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${view === 'admin' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
-						Panel Admina
+						Panel Admina ({cars.length})
 					</button>
 				</div>
 			</nav>
@@ -556,7 +709,7 @@ export default function App() {
 														<PolarGrid stroke='#cbd5e1' />
 														<PolarAngleAxis
 															dataKey='subject'
-															tick={{ fill: '#475569', fontSize: 11, fontWeight: '700' }}
+															tick={{ fill: '#475569', fontSize: 11, fontWeight: 'bold' }}
 														/>
 														<PolarRadiusAxis angle={30} domain={[0, 10]} tick={false} axisLine={false} />
 														<RechartsTooltip
@@ -566,7 +719,7 @@ export default function App() {
 																fontSize: '13px',
 																fontWeight: 'bold',
 																border: 'none',
-																boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
+																boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
 															}}
 														/>
 														<Radar
@@ -680,7 +833,7 @@ export default function App() {
 										</div>
 										<div className='mt-4'>
 											<FormInput
-												label='Maksymalny Budżet (PLN)'
+												label='Maksymal Budżet (PLN)'
 												type='number'
 												min='0'
 												name='maxPrice'
@@ -693,7 +846,7 @@ export default function App() {
 
 									<div className='bg-white p-6 rounded-3xl shadow-sm border'>
 										<h2 className='text-lg font-bold mb-5 text-slate-800'>Twoje priorytety</h2>
-										<div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
+										<div className='grid grid-cols-1 gap-3'>
 											{CRITERIA.map(c => (
 												<PreferenceSlider
 													key={c.weight}
@@ -701,8 +854,6 @@ export default function App() {
 													name={c.weight}
 													value={topsisPrefs[c.weight]}
 													onChange={handleTopsisChange}
-													leftText='Obojętne'
-													rightText='Priorytet'
 												/>
 											))}
 										</div>
@@ -738,8 +889,8 @@ export default function App() {
 												d='M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5'
 											/>
 										</svg>
-										<p className='font-medium text-xl text-slate-600 mb-2'>System oczekuje na parametry</p>
-										<p className='text-sm'>Skonfiguruj filtry po lewej stronie i kliknij Przelicz.</p>
+										<p className='font-medium text-xl text-slate-600 mb-2'>System gotowy ({cars.length} aut w bazie)</p>
+										<p className='text-sm'>Skonfiguruj filtry po lewej stronie i kliknij przycisk Przelicz.</p>
 									</div>
 								) : results.length === 0 ? (
 									<div className='text-center font-bold text-xl mt-10 text-slate-600 bg-white p-10 rounded-3xl shadow-sm border'>
@@ -833,7 +984,7 @@ export default function App() {
 															<div className='font-bold'>{car.comfort}/10</div>
 														</div>
 														<div className='mt-1'>
-															<div className='text-[10px] uppercase font-bold text-slate-400'>Niskie koszty napraw</div>
+															<div className='text-[10px] uppercase font-bold text-slate-400'>Koszty napraw</div>
 															<div className='font-bold'>{getMaintenanceText(car.maintenanceCost)}</div>
 														</div>
 													</div>
