@@ -1,11 +1,10 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, lazy, Suspense } from 'react'
 import { getAllCars } from './db'
 import { calculateTopsis } from './topsis'
 import { filterCars } from './utils/filterCars'
 import { BODY_TYPES, FUELS, TRANSMISSIONS, DRIVES, CONDITIONS, CRITERIA } from './constants'
 import { FormInput, FormSelect } from './components/FormElements'
 import WeightSelector from './components/WeightSelector'
-import AdminPanel from './components/AdminPanel'
 import { formatPrice, renderYear, getMaintenanceText } from './utils/formatters'
 import ErrorBoundary from './components/ErrorBoundary'
 import {
@@ -18,6 +17,9 @@ import {
 	Tooltip as RechartsTooltip,
 } from 'recharts'
 
+// 1. Asynchroniczne ładowanie komponentu (Lazy Loading) - oszczędza transfer i przyspiesza aplikację
+const AdminPanel = lazy(() => import('./components/AdminPanel'))
+
 export default function App() {
 	const [view, setView] = useState('user')
 	const [cars, setCars] = useState([])
@@ -29,7 +31,10 @@ export default function App() {
 				const dbCars = await getAllCars()
 				setCars(dbCars)
 			} catch (error) {
-				console.error('Błąd inicjalizacji IndexedDB:', error)
+				// Zastąpiono surowe console.error komunikatem UI
+				alert(
+					'Wystąpił problem z dostępem do lokalnej bazy danych. Sprawdź, czy przeglądarka nie blokuje IndexedDB (np. w trybie Incognito).',
+				)
 			} finally {
 				setIsLoading(false)
 			}
@@ -82,8 +87,8 @@ export default function App() {
 			})
 		}
 		const filtered = filterCars(cars, hardFilters)
-		const top = calculateTopsis(filtered, normalizedPrefs)
-		setResults(top.slice(0, 5))
+		const top = calculateTopsis(filtered, normalizedPrefs, 5) // Metodologicznie: Można zrezygnować z "5" w topsis.js i robić top.slice(0,5) tutaj
+		setResults(top)
 		setHasSearched(true)
 		window.scrollTo({ top: 0, behavior: 'smooth' })
 	}
@@ -92,24 +97,34 @@ export default function App() {
 		if (results.length === 0) return []
 		const top3 = results.slice(0, 3)
 
-		const prices = results.map(car => car.price)
-		const rawMinPrice = Math.min(...prices)
-		const rawMaxPrice = Math.max(...prices)
+		// 2. Dynamiczne, inteligentne wyliczanie granic wykresu
+		const getDynamicBounds = (key, customMargin = null) => {
+			const values = results.map(car => car[key])
+			const rawMin = Math.min(...values)
+			const rawMax = Math.max(...values)
 
-		const priceMargin =
-			rawMaxPrice === rawMinPrice ? rawMinPrice * 0.1 : Math.max(20000, (rawMaxPrice - rawMinPrice) * 0.15)
-		const dynamicMinPrice = Math.max(0, rawMinPrice - priceMargin)
-		const dynamicMaxPrice = rawMaxPrice + priceMargin
+			// Jeśli min i max są identyczne (wszystkie auta mają np. ten sam bagażnik) dajemy 10%
+			// W przeciwnym razie 15% marginesu na wykresie
+			let margin = rawMax === rawMin ? rawMin * 0.1 : (rawMax - rawMin) * 0.15
+			if (customMargin) margin = Math.max(customMargin, margin)
 
+			return {
+				min: Math.max(0, rawMin - margin), // Zabezpieczenie przed ujemnymi wartościami (np. spalanie)
+				max: rawMax + margin,
+			}
+		}
+
+		// Zastosowanie dynamicznych progów wyłącznie tam, gdzie to ma sens fizyczny
 		const BOUNDS = {
-			trunkSize: { min: 150, max: 700 },
-			consumption: { min: 0, max: 12 },
+			trunkSize: getDynamicBounds('trunkSize'),
+			consumption: getDynamicBounds('consumption'),
+			price: getDynamicBounds('price', 20000), // min. 20000 zł marginesu
+			acceleration: getDynamicBounds('acceleration'),
+			// Oceny eksperckie i skale 1-10 pozostawiamy sztywne, aby zachować sens wizualny!
 			maintenanceCost: { min: 1, max: 10 },
 			comfort: { min: 1, max: 10 },
-			price: { min: dynamicMinPrice, max: dynamicMaxPrice },
 			safety: { min: 1, max: 10 },
 			reliability: { min: 1, max: 10 },
-			acceleration: { min: 2.5, max: 14 },
 		}
 
 		const normalize = (key, val, invert = false) => {
@@ -167,12 +182,22 @@ export default function App() {
 			</nav>
 			<div className='p-4 md:p-6 max-w-7xl mx-auto print:max-w-full print:p-0'>
 				{view === 'admin' ? (
-					<AdminPanel cars={cars} setCars={setCars} />
+					// Wyświetlanie asynchronicznego Panelu Administratora wraz ze stanem oczekiwania (Suspense)
+					<Suspense
+						fallback={
+							<div className='flex flex-col justify-center items-center min-h-[400px]'>
+								<div className='w-10 h-10 border-4 border-slate-400 border-t-transparent rounded-full animate-spin mb-4'></div>
+								<p className='text-slate-500 font-bold'>Ładowanie panelu administratora...</p>
+							</div>
+						}>
+						<AdminPanel cars={cars} setCars={setCars} />
+					</Suspense>
 				) : (
 					<>
 						{hasSearched && results.length >= 1 && (
 							<ErrorBoundary>
 								<section className='w-full bg-white p-6 md:p-8 rounded-3xl border shadow-sm mb-8 animate-[fadeIn_0.5s_ease-out] print:border-none print:shadow-none print:p-0 print:m-0'>
+									{/* Skompaktowany nagłówek raportu PDF */}
 									<div className='hidden print:block text-center mb-3 pb-2 border-b-2 border-slate-800'>
 										<h1 className='text-2xl font-black text-slate-900 tracking-tight uppercase'>Raport AutoExpert</h1>
 										<p className='text-slate-600 font-medium text-xs'>
@@ -204,6 +229,8 @@ export default function App() {
 											Generuj Raport PDF
 										</button>
 									</div>
+
+									{/* Trzy wykresy pod sobą dopasowane do pojedynczej strony A4 */}
 									<div className='grid grid-cols-1 lg:grid-cols-3 gap-8 print:grid-cols-1 print:gap-2.5 print:mb-0'>
 										{results.slice(0, 3).map((car, i) => (
 											<div
@@ -417,6 +444,7 @@ export default function App() {
 									</div>
 								) : (
 									<div className='space-y-6 print:space-y-4'>
+										{/* Tytuł sekcji specyfikacji widoczny w druku na 2. stronie */}
 										<h3 className='hidden print:block text-2xl font-bold text-slate-800 border-b-2 border-slate-800 pb-2 mb-4'>
 											Szczegółowa specyfikacja (TOP 3)
 										</h3>
