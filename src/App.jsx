@@ -30,7 +30,7 @@ export default function App() {
 			try {
 				const dbCars = await getAllCars()
 				setCars(dbCars)
-			} catch (error) {
+			} catch {
 				// Zastąpiono surowe console.error komunikatem UI
 				alert(
 					'Wystąpił problem z dostępem do lokalnej bazy danych. Sprawdź, czy przeglądarka nie blokuje IndexedDB (np. w trybie Incognito).',
@@ -87,8 +87,8 @@ export default function App() {
 			})
 		}
 		const filtered = filterCars(cars, hardFilters)
-		const top = calculateTopsis(filtered, normalizedPrefs, 5) // Metodologicznie: Można zrezygnować z "5" w topsis.js i robić top.slice(0,5) tutaj
-		setResults(top)
+		const allScoredCars = calculateTopsis(filtered, normalizedPrefs)
+		setResults(allScoredCars.slice(0, 5))
 		setHasSearched(true)
 		window.scrollTo({ top: 0, behavior: 'smooth' })
 	}
@@ -97,30 +97,25 @@ export default function App() {
 		if (results.length === 0) return []
 		const top3 = results.slice(0, 3)
 
-		// 2. Dynamiczne, inteligentne wyliczanie granic wykresu
-		const getDynamicBounds = (key, customMargin = null) => {
+		const getDynamicBounds = (key, minMargin, minFloor = 0) => {
 			const values = results.map(car => car[key])
 			const rawMin = Math.min(...values)
 			const rawMax = Math.max(...values)
+			const spread = rawMax - rawMin
 
-			// Jeśli min i max są identyczne (wszystkie auta mają np. ten sam bagażnik) dajemy 10%
-			// W przeciwnym razie 15% marginesu na wykresie
-			let margin = rawMax === rawMin ? rawMin * 0.1 : (rawMax - rawMin) * 0.15
-			if (customMargin) margin = Math.max(customMargin, margin)
+			const margin = Math.max(minMargin, spread * 0.15)
 
 			return {
-				min: Math.max(0, rawMin - margin), // Zabezpieczenie przed ujemnymi wartościami (np. spalanie)
+				min: Math.max(minFloor, rawMin - margin),
 				max: rawMax + margin,
 			}
 		}
 
-		// Zastosowanie dynamicznych progów wyłącznie tam, gdzie to ma sens fizyczny
 		const BOUNDS = {
-			trunkSize: getDynamicBounds('trunkSize'),
-			consumption: getDynamicBounds('consumption'),
-			price: getDynamicBounds('price', 20000), // min. 20000 zł marginesu
-			acceleration: getDynamicBounds('acceleration'),
-			// Oceny eksperckie i skale 1-10 pozostawiamy sztywne, aby zachować sens wizualny!
+			price: getDynamicBounds('price', 15000, 5000),
+			trunkSize: getDynamicBounds('trunkSize', 80, 100),
+			consumption: getDynamicBounds('consumption', 1.5, 0),
+			acceleration: getDynamicBounds('acceleration', 1.5, 1.5),
 			maintenanceCost: { min: 1, max: 10 },
 			comfort: { min: 1, max: 10 },
 			safety: { min: 1, max: 10 },
@@ -130,9 +125,10 @@ export default function App() {
 		const normalize = (key, val, invert = false) => {
 			const b = BOUNDS[key] || { min: 0, max: Math.max(val, 1) }
 			const range = b.max - b.min === 0 ? 1 : b.max - b.min
-			let clampedVal = Math.max(b.min, Math.min(b.max, val))
-			let score = ((clampedVal - b.min) / range) * 10
-			return invert ? 10 - score : score
+			const clampedVal = Math.max(b.min, Math.min(b.max, val))
+			const score = ((clampedVal - b.min) / range) * 10
+			const finalScore = invert ? 10 - score : score
+			return Math.max(1, Math.min(10, finalScore))
 		}
 
 		const metrics = CRITERIA.map(c => ({ subject: c.label, key: c.key, invert: !c.benefit }))
@@ -182,7 +178,6 @@ export default function App() {
 			</nav>
 			<div className='p-4 md:p-6 max-w-7xl mx-auto print:max-w-full print:p-0'>
 				{view === 'admin' ? (
-					// Wyświetlanie asynchronicznego Panelu Administratora wraz ze stanem oczekiwania (Suspense)
 					<Suspense
 						fallback={
 							<div className='flex flex-col justify-center items-center min-h-[400px]'>
@@ -197,7 +192,6 @@ export default function App() {
 						{hasSearched && results.length >= 1 && (
 							<ErrorBoundary>
 								<section className='w-full bg-white p-6 md:p-8 rounded-3xl border shadow-sm mb-8 animate-[fadeIn_0.5s_ease-out] print:border-none print:shadow-none print:p-0 print:m-0'>
-									{/* Skompaktowany nagłówek raportu PDF */}
 									<div className='hidden print:block text-center mb-3 pb-2 border-b-2 border-slate-800'>
 										<h1 className='text-2xl font-black text-slate-900 tracking-tight uppercase'>Raport AutoExpert</h1>
 										<p className='text-slate-600 font-medium text-xs'>
@@ -230,7 +224,6 @@ export default function App() {
 										</button>
 									</div>
 
-									{/* Trzy wykresy pod sobą dopasowane do pojedynczej strony A4 */}
 									<div className='grid grid-cols-1 lg:grid-cols-3 gap-8 print:grid-cols-1 print:gap-2.5 print:mb-0'>
 										{results.slice(0, 3).map((car, i) => (
 											<div
@@ -245,7 +238,7 @@ export default function App() {
 														{i === 0 ? '🏆 Najlepszy wybór' : `Miejsce ${i + 1}`}
 													</span>
 												</div>
-												<div className='w-full max-w-[380px] mx-auto h-[340px] print:h-[265px] flex justify-center items-center [&_.recharts-wrapper]:!mx-auto'>
+												<div className='w-full max-w-[380px] mx-auto h-[340px] print:h-[253px] flex justify-center items-center [&_.recharts-wrapper]:!mx-auto'>
 													<ResponsiveContainer width='100%' height='100%'>
 														<RadarChart
 															cx='50%'

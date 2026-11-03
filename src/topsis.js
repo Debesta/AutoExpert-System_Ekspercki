@@ -1,6 +1,6 @@
 import { CRITERIA } from './constants'
 
-export function calculateTopsis(cars, weights, limit = 5) {
+export function calculateTopsis(cars, weights) {
 	// Zabezpieczenia: brak pojazdów zwraca pustą tablicę, jeden pojazd to automatyczny zwycięzca (100% dopasowania)
 	if (cars.length === 0) return []
 	if (cars.length === 1) return [{ ...cars[0], topsisScore: 1 }]
@@ -43,7 +43,5 @@ export function calculateTopsis(cars, weights, limit = 5) {
 			})
 			// Sortowanie malejące (najlepsze wyniki na górze)
 			.sort((a, b) => b.topsisScore - a.topsisScore)
-			// Ucięcie tablicy do zadanego limitu (domyślnie top 5)
-			.slice(0, limit)
 	)
 }
