@@ -1,5 +1,6 @@
 // --- 1. Słowniki danych dla formularzy filtrowania i dodawania pojazdów ---
-export const BODY_TYPES = ['Sedan', 'Kombi', 'SUV', 'Hatchback', 'Coupe']
+// constants.js
+export const BODY_TYPES = ['Sedan', 'Kombi', 'SUV', 'Hatchback', 'Liftback', 'Coupe'] 
 export const FUELS = ['Benzyna', 'Diesel', 'Hybryda', 'Elektryk', 'LPG']
 export const TRANSMISSIONS = ['Manualna', 'Automatyczna']
 export const DRIVES = ['FWD', 'RWD', 'AWD']
