@@ -6,7 +6,7 @@ export const CONDITIONS = ['Nowy', 'Używany']
 export const ENERGY_PRICES = {
 	Benzyna: 6.2, // PLN / l
 	Hybryda: 6.2, // PLN / l
-	Diesel: 7.5, // PLN / l
+	Diesel: 6.3, // PLN / l
 	LPG: 2.9, // PLN / l
 	Elektryk: 1.15, // PLN / kWh
 }

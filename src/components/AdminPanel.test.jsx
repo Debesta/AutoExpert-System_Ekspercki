@@ -94,7 +94,7 @@ describe('Komponent AdminPanel', () => {
 		expect(await screen.findByRole('status')).toHaveTextContent(/Dodano pojazd: BYD Seal/i)
 	})
 
-	it('edytuje i usuwa istniejący pojazd oraz obsługuje błędy zapisu', async () => {
+	it('edytuje i usuwa istniejący pojazd oraz przywraca bazę domyślną', async () => {
 		updateCarInDB.mockResolvedValueOnce()
 		deleteCarFromDB.mockResolvedValueOnce()
 		vi.spyOn(window, 'confirm').mockReturnValue(true)
