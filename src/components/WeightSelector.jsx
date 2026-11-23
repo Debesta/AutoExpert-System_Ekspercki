@@ -1,13 +1,7 @@
-const getWeightConfig = value => {
-	if (value <= 2) return { text: 'Znikome znaczenie', color: 'bg-gray-100 text-gray-600' }
-	if (value <= 4) return { text: 'Mało ważne', color: 'bg-blue-100 text-blue-700' }
-	if (value <= 6) return { text: 'Średnio ważne', color: 'bg-yellow-100 text-yellow-700' }
-	if (value <= 8) return { text: 'Ważne', color: 'bg-orange-100 text-orange-700' }
-	return { text: 'Priorytet', color: 'bg-red-100 text-red-700' }
-}
+import { getWeightLabel } from '../utils/formatters'
 
 export default function WeightSelector({ label, name, value, onChange }) {
-	const config = getWeightConfig(value)
+	const config = getWeightLabel(value)
 
 	return (
 		<div className='bg-slate-50 p-3 rounded-xl border border-slate-100 transition-colors hover:bg-slate-100'>
@@ -26,14 +20,14 @@ export default function WeightSelector({ label, name, value, onChange }) {
 				id={name}
 				name={name}
 				type='range'
-				min='1'
+				min='0'
 				max='10'
 				value={value}
 				onChange={onChange}
 				className='w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600'
 			/>
 			<div className='flex justify-between text-[9px] text-slate-400 mt-1.5 font-bold uppercase tracking-wider'>
-				<span>1 (Min)</span>
+				<span>0 (Wył.)</span>
 				<span>10 (Max)</span>
 			</div>
 		</div>

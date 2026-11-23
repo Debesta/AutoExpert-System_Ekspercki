@@ -1,23 +1,39 @@
-// --- 1. Słowniki danych dla formularzy filtrowania i dodawania pojazdów ---
-// constants.js
-export const BODY_TYPES = ['Sedan', 'Kombi', 'SUV', 'Hatchback', 'Liftback', 'Coupe'] 
+export const BODY_TYPES = ['Sedan', 'Kombi', 'SUV', 'Hatchback', 'Coupe', 'Liftback']
 export const FUELS = ['Benzyna', 'Diesel', 'Hybryda', 'Elektryk', 'LPG']
 export const TRANSMISSIONS = ['Manualna', 'Automatyczna']
 export const DRIVES = ['FWD', 'RWD', 'AWD']
 export const CONDITIONS = ['Nowy', 'Używany']
+export const ENERGY_PRICES = {
+	Benzyna: 6.2, // PLN / l
+	Hybryda: 6.2, // PLN / l
+	Diesel: 7.5, // PLN / l
+	LPG: 2.9, // PLN / l
+	Elektryk: 1.15, // PLN / kWh
+}
 
-// --- 2. Konfiguracja algorytmu decyzyjnego TOPSIS ---
-// Definiuje, z jakimi kluczami (obiektu auta i obiektu preferencji) powiązane jest dane kryterium,
-// jak się nazywa (label) oraz jaki ma charakter (benefit).
+export function calculateEnergyCostPer100km(car) {
+	const consumption = Number(car.consumption) || 0
+	const unitPrice = ENERGY_PRICES[car.fuel] ?? ENERGY_PRICES.Benzyna
+	return Number((consumption * unitPrice).toFixed(2))
+}
+
+export function getConsumptionUnit(fuel) {
+	return fuel === 'Elektryk' ? 'kWh/100km' : 'l/100km'
+}
+
 export const CRITERIA = [
-	// benefit: true -> im więcej, tym lepiej (cecha pozytywna, np. bagażnik, komfort)
-	{ key: 'trunkSize', weight: 'trunk', benefit: true, label: 'Wielkość bagażnika' },
-	// benefit: false -> im mniej, tym lepiej (cecha negatywna, tzw. kosztowa, np. spalanie, cena)
-	{ key: 'consumption', weight: 'consumption', benefit: false, label: 'Spalanie paliwa' },
-	{ key: 'maintenanceCost', weight: 'maintenance', benefit: false, label: 'Koszty napraw' },
-	{ key: 'comfort', weight: 'comfort', benefit: true, label: 'Komfort' },
-	{ key: 'price', weight: 'price', benefit: false, label: 'Niska cena' },
-	{ key: 'safety', weight: 'safety', benefit: true, label: 'Bezpieczeństwo' },
-	{ key: 'reliability', weight: 'reliability', benefit: true, label: 'Niezawodność' },
-	{ key: 'acceleration', weight: 'performance', benefit: false, label: 'Osiągi' }, // Czas 0-100: im mniej s, tym lepiej
+	{ key: 'price', weight: 'price', label: 'Cena', benefit: false },
+	{
+		key: 'energyCost',
+		weight: 'consumption',
+		label: 'Koszt jazdy (100 km)',
+		benefit: false,
+		getValue: calculateEnergyCostPer100km,
+	},
+	{ key: 'safety', weight: 'safety', label: 'Bezpieczeństwo', benefit: true },
+	{ key: 'reliability', weight: 'reliability', label: 'Niezawodność', benefit: true },
+	{ key: 'acceleration', weight: 'performance', label: 'Przyspieszenie', benefit: false },
+	{ key: 'trunkSize', weight: 'trunk', label: 'Bagażnik', benefit: true },
+	{ key: 'maintenanceCost', weight: 'maintenance', label: 'Koszty serwisu', benefit: false },
+	{ key: 'comfort', weight: 'comfort', label: 'Komfort', benefit: true },
 ]

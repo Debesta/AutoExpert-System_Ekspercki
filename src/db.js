@@ -1,38 +1,100 @@
-// Konfiguracja bazy danych
 const DB_NAME = 'AutoExpertDB'
 const DB_VERSION = 1
 const STORE_NAME = 'cars'
 
-// 1. Otwarcie połączenia z IndexedDB
+let dbPromise = null
+
+function getSeedUrl() {
+	const base = import.meta.env?.BASE_URL || '/'
+	return `${base.endsWith('/') ? base : `${base}/`}cars.json`
+}
+
+// 1. Otwarcie (lub reużycie) współdzielonego połączenia z IndexedDB
 export function openDB() {
-	return new Promise((resolve, reject) => {
+	if (dbPromise) return dbPromise
+
+	dbPromise = new Promise((resolve, reject) => {
 		const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-		// Uruchamia się tylko przy pierwszym tworzeniu bazy lub przy podbiciu DB_VERSION.
-		// Służy do zdefiniowania schematu bazy (tabel i indeksów).
 		request.onupgradeneeded = event => {
 			const db = event.target.result
 			if (!db.objectStoreNames.contains(STORE_NAME)) {
-				// Tworzymy tabelę "cars" z unikalnym kluczem "id", który automatycznie inkrementuje (auto-rośnie)
 				const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true })
-				// Tworzenie indeksów, by ułatwić ewentualne przyszłe szybkie wyszukiwanie po tych polach
 				store.createIndex('brand', 'brand', { unique: false })
 				store.createIndex('price', 'price', { unique: false })
 				store.createIndex('fuel', 'fuel', { unique: false })
 			}
 		}
 
-		request.onsuccess = event => resolve(event.target.result)
-		request.onerror = event => reject('Błąd otwarcia IndexedDB: ' + event.target.errorCode)
+		request.onsuccess = event => {
+			const db = event.target.result
+			db.onversionchange = () => {
+				db.close()
+				dbPromise = null
+			}
+			db.onclose = () => {
+				dbPromise = null
+			}
+			resolve(db)
+		}
+
+		request.onerror = event => {
+			dbPromise = null
+			reject(new Error(`Błąd otwarcia IndexedDB: ${event.target.error?.message || event.target.errorCode}`))
+		}
+	})
+
+	return dbPromise
+}
+
+export async function closeDB() {
+	if (!dbPromise) return
+	try {
+		const db = await dbPromise
+		db.close()
+	} finally {
+		dbPromise = null
+	}
+}
+
+async function fetchDefaultCars() {
+	const url = getSeedUrl()
+	const response = await fetch(url)
+	if (!response.ok) {
+		throw new Error(`Nie udało się pobrać pliku ${url} (HTTP ${response.status})`)
+	}
+	const data = await response.json()
+	if (!Array.isArray(data)) {
+		throw new Error('Plik cars.json ma nieprawidłowy format (oczekiwano tablicy pojazdów).')
+	}
+	return data
+}
+
+// 2. Nadpisanie całej zawartości bazy nową listą pojazdów (używane przez seed, reset i import JSON)
+export async function replaceAllCarsInDB(carsList) {
+	const db = await openDB()
+	await new Promise((resolve, reject) => {
+		const transaction = db.transaction([STORE_NAME], 'readwrite')
+		const store = transaction.objectStore(STORE_NAME)
+		store.clear()
+		carsList.forEach(car => store.put(car))
+		transaction.oncomplete = () => resolve()
+		transaction.onerror = () => reject(transaction.error || new Error('Błąd zapisu transakcji IndexedDB'))
+	})
+
+	return new Promise((resolve, reject) => {
+		const transaction = db.transaction([STORE_NAME], 'readonly')
+		const store = transaction.objectStore(STORE_NAME)
+		const request = store.getAll()
+		request.onsuccess = () => resolve(request.result)
+		request.onerror = () => reject(request.error)
 	})
 }
 
-// 2. Inicjalizacja i asynchroniczne pobranie danych z /cars.json przy pierwszym uruchomieniu
-// (Tzw. mechanizm Seeding-u bazy wiedzy)
+// 3. Inicjalizacja i zasilenie bazy z cars.json przy pierwszym uruchomieniu
 export async function initAndSeedDB() {
 	const db = await openDB()
 
-	// Sprawdzanie, ile rekordów jest obecnie w bazie
 	const count = await new Promise((resolve, reject) => {
 		const transaction = db.transaction([STORE_NAME], 'readonly')
 		const store = transaction.objectStore(STORE_NAME)
@@ -41,31 +103,28 @@ export async function initAndSeedDB() {
 		req.onerror = () => reject(req.error)
 	})
 
-	// Jeśli baza jest pusta (count === 0), ładujemy dane początkowe z pliku konfiguracyjnego
 	if (count === 0) {
-		try {
-			const response = await fetch('/cars.json')
-			const initialCars = await response.json()
-
-			// Transakcja zapisu wielu rekordów naraz
-			await new Promise((resolve, reject) => {
-				const transaction = db.transaction([STORE_NAME], 'readwrite')
-				const store = transaction.objectStore(STORE_NAME)
-				initialCars.forEach(car => store.put(car))
-				transaction.oncomplete = () => resolve()
-				transaction.onerror = () => reject(transaction.error)
-			})
-		} catch (err) {
-			console.error('Błąd zasilania bazy z /cars.json:', err)
-		}
+		const initialCars = await fetchDefaultCars()
+		await new Promise((resolve, reject) => {
+			const transaction = db.transaction([STORE_NAME], 'readwrite')
+			const store = transaction.objectStore(STORE_NAME)
+			initialCars.forEach(car => store.put(car))
+			transaction.oncomplete = () => resolve()
+			transaction.onerror = () => reject(transaction.error || new Error('Błąd zasilania bazy IndexedDB'))
+		})
 	}
+
 	return db
 }
 
-// 3. Pobranie wszystkich pojazdów (READ)
+// 4. Przywrócenie danych domyślnych z cars.json
+export async function resetDBToDefault() {
+	const initialCars = await fetchDefaultCars()
+	return replaceAllCarsInDB(initialCars)
+}
+
+// 5. Pobranie wszystkich pojazdów (READ)
 export async function getAllCars() {
-	// Kluczowy moment: Pobieranie wymusza sprawdzenie, czy baza nie jest pusta (initAndSeedDB).
-	// Zapobiega to sytuacji, gdzie użytkownik widzi 0 aut przy pierwszym odpaleniu aplikacji.
 	const db = await initAndSeedDB()
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction([STORE_NAME], 'readonly')
@@ -76,32 +135,31 @@ export async function getAllCars() {
 	})
 }
 
-// 4. Dodanie nowego pojazdu (CREATE)
+// 6. Dodanie nowego pojazdu (CREATE)
 export async function addCarToDB(carData) {
 	const db = await openDB()
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction([STORE_NAME], 'readwrite')
 		const store = transaction.objectStore(STORE_NAME)
 		const request = store.add(carData)
-		request.onsuccess = () => resolve(request.result) // result zwraca nowe wygenerowane ID
+		request.onsuccess = () => resolve(request.result)
 		request.onerror = () => reject(request.error)
 	})
 }
 
-// 5. Aktualizacja pojazdu (UPDATE)
+// 7. Aktualizacja pojazdu (UPDATE)
 export async function updateCarInDB(carData) {
 	const db = await openDB()
 	return new Promise((resolve, reject) => {
 		const transaction = db.transaction([STORE_NAME], 'readwrite')
 		const store = transaction.objectStore(STORE_NAME)
-		// Użyto put() - nadpisze rekord, jeśli carData zawiera istniejące id
 		const request = store.put(carData)
 		request.onsuccess = () => resolve()
 		request.onerror = () => reject(request.error)
 	})
 }
 
-// 6. Usunięcie pojazdu z bazy (DELETE)
+// 8. Usunięcie pojazdu z bazy (DELETE)
 export async function deleteCarFromDB(id) {
 	const db = await openDB()
 	return new Promise((resolve, reject) => {
